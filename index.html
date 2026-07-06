@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARBEIT MACHT FREI</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #1a1a1a; color: #ddd; padding: 20px; text-align: center; }
+        .container { max-width: 1200px; margin: auto; background: #2b2b2b; padding: 25px; border-radius: 12px; }
+        .stat { font-size: 20px; margin: 8px; padding: 10px; background: #3a3a3a; border-radius: 8px; display: inline-block; min-width: 220px; }
+        button { padding: 10px 18px; margin: 6px; font-size: 15px; cursor: pointer; border: none; border-radius: 6px; }
+        .btn-primary { background: #4a90e2; color: white; }
+        .btn-danger { background: #c0392b; color: white; }
+        .btn-warning { background: #f39c12; color: black; }
+        .section { margin: 18px 0; padding: 18px; background: #333; border-radius: 10px; }
+        .prisoner-list { 
+            display: flex; 
+            flex-direction: column; 
+            gap: 10px; 
+            max-height: 420px; 
+            overflow-y: auto; 
+            padding-right: 8px;
+        }
+        .prisoner-row {
+            background: #3a2a2a; 
+            padding: 14px 18px; 
+            border-radius: 8px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            border-left: 6px solid #f1c40f;
+        }
+        .punishment-row { 
+            background: #3a1f1f; 
+            border-left: 6px solid #e74c3c;
+        }
+        .event-log { min-height: 160px; background: #222; padding: 15px; border-radius: 8px; text-align: left; overflow-y: auto; max-height: 240px; }
+        .popup { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #2b2b2b; padding: 25px; border: 4px solid #c0392b; border-radius: 12px; z-index: 1000; max-width: 420px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ARBEIT MACHT FREI</h1>
+        
+        <div class="section">
+            <div class="stat">💰 金錢：<span id="money">8000</span></div>
+            <div class="stat">👥 猶太人 / 上限：<span id="prisonerCount">8 / 20</span></div>
+            <div class="stat">🛠️ Arbeit中：<span id="laborCount">0</span></div>
+            <div class="stat">⭐ 穩定度：<span id="stability">75</span>%</div>
+            <div class="stat">🍞 食物：<span id="food">180</span></div>
+            <div class="stat">🛡️ 守衛：<span id="guards">0</span>（剩餘抵擋 <span id="guardUses">0</span> 次）</div>
+        </div>
+
+        <div class="section">
+            <button class="btn-primary" onclick="addPrisoner()">新增猶太人 (-100)</button>
+            <button class="btn-primary" onclick="expandCamp()">擴建集中營 (-2000)</button>
+            <button class="btn-warning" onclick="buyFood()">購買食物 (-300)</button>
+            <button class="btn-primary" onclick="hireGuard()">聘請守衛 (-500)</button>
+            <button class="btn-primary" onclick="reinforceCamp()">加固集中營 (-500)</button>
+        </div>
+
+        <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
+            <div class="section" style="width: 80%;">
+                <h2>Arbeit區</h2>
+                <div id="laborList" class="prisoner-list"></div>
+            </div>
+
+            <div class="section" style="width: 80%;">
+                <h2>刑罰區</h2>
+                <div id="punishmentList" class="prisoner-list"></div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>事件日誌</h2>
+            <div id="eventLog" class="event-log"></div>
+        </div>
+    </div>
+
+    <div id="popup" class="popup" style="display:none;">
+        <h3 id="popupTitle"></h3>
+        <p id="popupContent"></p>
+        <button onclick="closePopup()">確認</button>
+    </div>
+
+    <script>
+        let money = 8000;
+        let food = 180;
+        let stability = 75;
+        let capacity = 20;
+        let guards = 0;
+        let guardUses = 0;
+        let riotCooldown = 0;
+        let tick = 0;
+        let prisoners = [];
+
+        function initPrisoners() {
+            prisoners = [];
+            for (let i = 1; i <= 8; i++) {
+                const prod = Math.floor(Math.random() * 51) + 75;
+                prisoners.push({ id: i, name: "Jude-" + String(i).padStart(3, '0'), productivity: prod, status: "idle" });
+            }
+        }
+
+        function updateStats() {
+            const laborCount = prisoners.filter(function(p) { return p.status === 'working' || p.status === 'lazy'; }).length;
+            document.getElementById("money").textContent = money;
+            document.getElementById("prisonerCount").textContent = prisoners.length + " / " + capacity;
+            document.getElementById("laborCount").textContent = laborCount;
+            document.getElementById("stability").textContent = stability;
+            document.getElementById("food").textContent = food;
+            document.getElementById("guards").textContent = guards;
+            document.getElementById("guardUses").textContent = guardUses;
+        }
+
+        function addLog(msg, important) {
+            if (!important) important = false;
+            const log = document.getElementById("eventLog");
+            const span = document.createElement("span");
+            if (important) { 
+                span.style.color = "#ff8888"; 
+                span.style.fontWeight = "bold"; 
+                showPopup("事件通知", msg);
+            }
+            span.innerHTML = "[現在] " + msg + "<br>";
+            log.insertBefore(span, log.firstChild);
+        }
+
+        function showPopup(title, content) {
+            document.getElementById("popupTitle").textContent = title;
+            document.getElementById("popupContent").innerHTML = content;
+            document.getElementById("popup").style.display = "block";
+        }
+
+        function closePopup() {
+            document.getElementById("popup").style.display = "none";
+        }
+
+        function renderLaborList() {
+            const container = document.getElementById("laborList");
+            container.innerHTML = "";
+            const list = prisoners.filter(function(p) { return p.status !== 'executed'; });
+
+            for (let i = 0; i < list.length; i++) {
+                const p = list[i];
+                const row = document.createElement("div");
+                row.className = "prisoner-row";
+
+                const left = document.createElement("div");
+                if (p.status === 'working' || p.status === 'lazy') {
+                    left.innerHTML = "<strong>" + p.name + "</strong><br>Rate: <span style='color:#ffcc00;font-weight:bold'>" + p.productivity + "</span> 金錢/小時";
+                } else {
+                    left.innerHTML = "<strong>" + p.name + "</strong>（待命中）";
+                }
+
+                const right = document.createElement("div");
+                if (p.status === 'idle') {
+                    const btn = document.createElement("button");
+                    btn.className = "btn-primary";
+                    btn.textContent = "加入Arbeit";
+                    btn.onclick = function() { 
+                        p.status = 'working'; 
+                        addLog(p.name + " 已加入Arbeit"); 
+                        renderLaborList(); renderPunishmentList(); 
+                    };
+                    right.appendChild(btn);
+                } else {
+                    const btn = document.createElement("button");
+                    btn.className = "btn-warning";
+                    btn.textContent = "中斷Arbeit";
+                    btn.onclick = function() { removeFromLabor(p.id); };
+                    right.appendChild(btn);
+                }
+
+                row.appendChild(left);
+                row.appendChild(right);
+                container.appendChild(row);
+            }
+        }
+
+        function renderPunishmentList() {
+            const container = document.getElementById("punishmentList");
+            container.innerHTML = "";
+            const candidates = prisoners.filter(function(p) { return p.status !== 'executed'; });
+
+            for (let i = 0; i < candidates.length; i++) {
+                const p = candidates[i];
+                const row = document.createElement("div");
+                row.className = "prisoner-row punishment-row";
+
+                const left = document.createElement("div");
+                left.innerHTML = "<strong>" + p.name + "</strong>";
+
+                const right = document.createElement("div");
+                const btn = document.createElement("button");
+                btn.className = "btn-danger";
+                btn.textContent = "送入毒氣室";
+                btn.onclick = function() { sendToExecution(p.id); };
+                right.appendChild(btn);
+
+                row.appendChild(left);
+                row.appendChild(right);
+                container.appendChild(row);
+            }
+        }
+
+        function removeFromLabor(id) {
+            const p = prisoners.find(function(pr) { return pr.id === id; });
+            if (p) { p.status = 'idle'; addLog("Jude " + p.name + " 已中斷Arbeit"); }
+            renderLaborList(); renderPunishmentList();
+        }
+
+        function sendToExecution(id) {
+            const p = prisoners.find(function(pr) { return pr.id === id; });
+            if (p) { p.status = 'executed'; addLog("猶太人 " + p.name + " 已送入毒氣室", true); }
+            renderLaborList(); renderPunishmentList(); updateStats();
+        }
+
+        function addPrisoner() {
+            if (money < 100) return alert("金錢不足！");
+            if (prisoners.length >= capacity) return alert("已達集中營上限！");
+            money -= 100;
+            const newId = Math.max(0, ...prisoners.map(function(p){return p.id})) + 1;
+            const prod = Math.floor(Math.random() * 51) + 75;
+            prisoners.push({ id: newId, name: "Jude-" + String(newId).padStart(3,'0'), productivity: prod, status: "idle" });
+            addLog("新增猶太人 " + prisoners[prisoners.length-1].name);
+            updateStats(); renderLaborList(); renderPunishmentList();
+        }
+
+        function expandCamp() {
+            if (money < 2000) return alert("金錢不足！");
+            money -= 2000;
+            capacity += 10;
+            addLog("集中營擴建完成，上限 +10（目前 " + capacity + "）");
+            updateStats();
+        }
+
+        function buyFood() {
+            if (money < 300) return alert("金錢不足！");
+            money -= 300; food += 120; stability = Math.min(100, stability + 12);
+            addLog("購買食物完成，穩定度提升");
+            updateStats();
+        }
+
+        function hireGuard() {
+            if (money < 500) return alert("金錢不足！");
+            money -= 500; guards += 1; guardUses += 3;
+            addLog("聘請守衛成功（可抵擋 3 次暴亂）");
+            updateStats();
+        }
+
+        function reinforceCamp() {
+            if (money < 500) return alert("金錢不足！");
+            money -= 500;
+            const restore = Math.floor(Math.random() * 51) + 25;
+            stability = Math.min(100, stability + restore);
+            addLog("加固集中營完成，穩定度恢復 " + restore + " 點");
+            updateStats();
+        }
+
+        function gameTick() {
+            tick++;
+            let totalRate = 0;
+
+            const activePrisoners = prisoners.filter(function(p) { return p.status !== 'executed'; });
+            const totalActive = activePrisoners.length;
+            const workingCount = activePrisoners.filter(function(p) { return p.status === 'working' || p.status === 'lazy'; }).length;
+
+            let laborPenalty = 0;
+            if (totalActive > 0) {
+                const ratio = workingCount / totalActive;
+                laborPenalty = Math.floor(ratio * 10);
+            }
+
+            for (let i = 0; i < prisoners.length; i++) {
+                const p = prisoners[i];
+                if (p.status === 'working' || p.status === 'lazy') {
+                    p.productivity = Math.max(30, Math.min(160, p.productivity + (Math.floor(Math.random()*11)-5)));
+                    totalRate += p.productivity;
+                    if (Math.random() < 0.18) p.status = 'lazy';
+                }
+            }
+
+            money += Math.floor(totalRate);
+            money = Math.max(0, money - (totalActive * 8));
+
+            const foodConsumption = Math.max(5, Math.floor(totalActive * 2.5));
+            food = Math.max(0, food - foodConsumption);
+
+            // Arbeit穩定度懲罰
+            stability = Math.max(0, stability - laborPenalty);
+
+            // 食物 ≤ 0 時，每時間單位餓死 1 名猶太人
+            if (food <= 0) {
+                const alive = prisoners.filter(function(p) { return p.status !== 'executed'; });
+                if (alive.length > 0) {
+                    const victimIndex = Math.floor(Math.random() * alive.length);
+                    const victim = alive[victimIndex];
+                    victim.status = 'executed';
+                    addLog("有猶太人因飢餓死亡", true);
+                }
+            }
+
+            // 暴亂系統
+            if (riotCooldown > 0) {
+                riotCooldown--;
+            } else if (Math.random() < 0.10) {
+                if (guardUses > 0) {
+                    guardUses--;
+                    addLog("守衛成功阻止暴亂！", true);
+                } else {
+                    const riotDamage = Math.floor(Math.random() * 16) + 15;
+                    stability = Math.max(0, stability - riotDamage);
+                    let escaped = 0;
+                    for (let i = 0; i < prisoners.length; i++) {
+                        if (prisoners[i].status !== 'executed' && Math.random() < 0.12) {
+                            prisoners[i].status = 'executed';
+                            escaped++;
+                        }
+                    }
+                    addLog("暴亂發生！穩定度 -" + riotDamage + "，" + escaped + " 人逃走", true);
+                    riotCooldown = 3;
+                }
+            }
+
+            renderLaborList();
+            renderPunishmentList();
+            updateStats();
+        }
+
+        function init() {
+            initPrisoners();
+            updateStats();
+            renderLaborList();
+            renderPunishmentList();
+            addLog("遊戲已啟動 - 每 3 秒自動推進", true);
+            setInterval(gameTick, 3000);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
